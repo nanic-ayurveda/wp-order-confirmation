@@ -351,22 +351,6 @@ app.post("/test", (req, res) => {
   res.json({ received: true, body: req.body });
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  if (keepAliveInterval) {
-    clearInterval(keepAliveInterval);
-  }
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  if (keepAliveInterval) {
-    clearInterval(keepAliveInterval);
-  }
-  process.exit(0);
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
