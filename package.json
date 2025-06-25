@@ -3,17 +3,26 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "build": "echo 'No build step required - Node.js app'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["webhook", "shopify", "whatsapp", "notifications"],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Shopify webhook server for WhatsApp order notifications",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "axios": "^1.9.0",
     "body-parser": "^2.2.0",
     "crypto": "^1.0.1",
     "dotenv": "^16.5.0",
     "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
   }
 }
