@@ -514,7 +514,7 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
 
     // Extract tracking information using the comprehensive function
     const trackingInfo = extractTrackingInfo(order);
-    const { trackingNumber, trackingLink, trackingCompany } = trackingInfo;
+    const { trackingNumber, trackingLink } = trackingInfo;
 
     // Send customer notification if phone is available
     if (phone) {
@@ -536,13 +536,12 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
 
     // Send admin notification
     await sendAdminWhatsapp("admin_order_fulfilled", [
-      orderId,
-      customerName || "Customer",
-      phone || "Not Provided",
-      shippedItems,
-      trackingCompany,
-      trackingNumber,
-      trackingLink
+      orderId,                    // {{2}} - Order Number
+      customerName || "Customer", // {{3}} - Customer Name
+      phone || "Not Provided",    // {{4}} - Customer Phone
+      shippedItems,               // {{5}} - Items Shipped
+      trackingNumber,             // {{6}} - Tracking Number
+      trackingLink                // {{7}} - Tracking Link
     ]);
 
     console.log("✅ Fulfillment notifications sent successfully");
