@@ -178,6 +178,91 @@ const getAdminNumbers = () => {
   return getAdminDetails().map(admin => admin.phone);
 };
 
+// Function to extract tracking information from Shopify order
+const extractTrackingInfo = (order) => {
+  console.log("🔍 Extracting tracking info from order:", order.name);
+  
+  // Log all fulfillments for debugging
+  if (order.fulfillments && order.fulfillments.length > 0) {
+    console.log("📦 Found fulfillments:", order.fulfillments.length);
+    order.fulfillments.forEach((fulfillment, index) => {
+      console.log(`   Fulfillment ${index + 1}:`, {
+        id: fulfillment.id,
+        tracking_number: fulfillment.tracking_number,
+        tracking_url: fulfillment.tracking_url,
+        tracking_company: fulfillment.tracking_company,
+        tracking_numbers: fulfillment.tracking_numbers,
+        tracking_urls: fulfillment.tracking_urls
+      });
+    });
+  } else {
+    console.log("⚠️ No fulfillments found in order");
+  }
+
+  // Check for tracking in fulfillments
+  let trackingNumber = "Not Available";
+  let trackingLink = "No link";
+  let trackingCompany = "Not specified";
+
+  if (order.fulfillments && order.fulfillments.length > 0) {
+    const fulfillment = order.fulfillments[0]; // Get first fulfillment
+    
+    // Try different tracking number fields
+    if (fulfillment.tracking_numbers && fulfillment.tracking_numbers.length > 0) {
+      trackingNumber = fulfillment.tracking_numbers[0];
+    } else if (fulfillment.tracking_number) {
+      trackingNumber = fulfillment.tracking_number;
+    }
+    
+    // Try different tracking URL fields
+    if (fulfillment.tracking_urls && fulfillment.tracking_urls.length > 0) {
+      trackingLink = fulfillment.tracking_urls[0];
+    } else if (fulfillment.tracking_url) {
+      trackingLink = fulfillment.tracking_url;
+    }
+    
+    // Get tracking company
+    if (fulfillment.tracking_company) {
+      trackingCompany = fulfillment.tracking_company;
+    }
+  }
+
+  // Check for tracking in line items (some apps store tracking there)
+  if (order.line_items && Array.isArray(order.line_items)) {
+    order.line_items.forEach((item, index) => {
+      if (item.fulfillment && item.fulfillment.tracking_number) {
+        console.log(`   Line item ${index + 1} has tracking:`, item.fulfillment.tracking_number);
+        if (trackingNumber === "Not Available") {
+          trackingNumber = item.fulfillment.tracking_number;
+        }
+      }
+    });
+  }
+
+  // Check for tracking in shipping lines
+  if (order.shipping_lines && Array.isArray(order.shipping_lines)) {
+    order.shipping_lines.forEach((shipping, index) => {
+      console.log(`   Shipping line ${index + 1}:`, {
+        title: shipping.title,
+        carrier_identifier: shipping.carrier_identifier,
+        code: shipping.code
+      });
+    });
+  }
+
+  console.log("📋 Final tracking info:", {
+    trackingNumber,
+    trackingLink,
+    trackingCompany
+  });
+
+  return {
+    trackingNumber,
+    trackingLink,
+    trackingCompany
+  };
+};
+
 // Function to send WhatsApp template message to customer
 const sendCustomerWhatsapp = async (phone, templateName, params) => {
   try {
@@ -225,11 +310,14 @@ const sendAdminWhatsapp = async (templateName, baseParams) => {
     }
 
     console.log(`📱 Sending WhatsApp template "${templateName}" to ${adminDetails.length} admin(s)`);
+    console.log(`📋 Template parameters:`, baseParams);
     
     const promises = adminDetails.map(async (admin) => {
       try {
         // Create personalized parameters for each admin
         const params = [admin.name, ...baseParams];
+        
+        console.log(`📤 Sending to ${admin.name} (${admin.phone}) with params:`, params);
         
         await axios.post(
           `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
@@ -320,6 +408,8 @@ app.post("/webhook/orders/create", verifyShopifyWebhook, async (req, res) => {
   
   try {
     console.log("🎯 New order webhook received");
+    console.log("📦 Order ID:", req.body?.name || "Unknown");
+    console.log("⏰ Timestamp:", new Date().toISOString());
     const order = req.body;
 
     // Validate order data
@@ -350,7 +440,7 @@ app.post("/webhook/orders/create", verifyShopifyWebhook, async (req, res) => {
     const products = order.line_items && Array.isArray(order.line_items)
       ? order.line_items
           .map((item, index) => `${index + 1}. ${item.name} - ${item.quantity} nos`)
-          .join("\n")
+          .join(", ")
       : "No items";
 
     // Send admin notification using template
@@ -370,7 +460,7 @@ app.post("/webhook/orders/create", verifyShopifyWebhook, async (req, res) => {
       const productsList = order.line_items && Array.isArray(order.line_items)
         ? order.line_items
             .map((item, idx) => `${idx + 1}. ${item.name} - ${item.quantity} no${item.quantity > 1 ? "s" : ""}`)
-            .join("\n")
+            .join(", ")
         : "No items";
 
       await sendCustomerWhatsapp(
@@ -402,6 +492,8 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
   
   try {
     console.log("📦 Order fulfillment webhook received");
+    console.log("📦 Order ID:", req.body?.name || "Unknown");
+    console.log("⏰ Timestamp:", new Date().toISOString());
     const order = req.body;
 
     const customer = order.customer;
@@ -420,8 +512,9 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
           .join(", ")
       : "No items";
 
-    const trackingNumber = order?.fulfillments?.[0]?.tracking_number || "Not Available";
-    const trackingLink = order?.fulfillments?.[0]?.tracking_url || "No link";
+    // Extract tracking information using the comprehensive function
+    const trackingInfo = extractTrackingInfo(order);
+    const { trackingNumber, trackingLink, trackingCompany } = trackingInfo;
 
     // Send customer notification if phone is available
     if (phone) {
@@ -447,6 +540,7 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
       customerName || "Customer",
       phone || "Not Provided",
       shippedItems,
+      trackingCompany,
       trackingNumber,
       trackingLink
     ]);
@@ -493,6 +587,26 @@ app.post("/test", (req, res) => {
   updateActivity(); // Update activity on test calls
   console.log("Test endpoint hit:", req.body);
   res.json({ received: true, body: req.body });
+});
+
+// Test tracking extraction endpoint
+app.post("/test-tracking", (req, res) => {
+  updateActivity(); // Update activity on test calls
+  console.log("Test tracking endpoint hit");
+  
+  if (req.body && req.body.order) {
+    const trackingInfo = extractTrackingInfo(req.body.order);
+    res.json({ 
+      success: true, 
+      trackingInfo,
+      orderId: req.body.order.name 
+    });
+  } else {
+    res.json({ 
+      success: false, 
+      error: "No order data provided" 
+    });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
