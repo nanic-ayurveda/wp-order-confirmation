@@ -117,8 +117,38 @@ const getCustomerPhone = (customer) => {
 
   if (!rawPhone) return null;
 
-  // Remove spaces and "+" sign to format like 91XXXXXXXXXX
-  return rawPhone.replace(/\s+/g, "").replace(/^\+/, "");
+  // Remove all spaces and "+" sign
+  let cleanedPhone = rawPhone.replace(/\s+/g, "").replace(/^\+/, "");
+  
+  // Check if it's a valid phone number
+  if (!cleanedPhone || cleanedPhone.length < 10) {
+    console.warn(`⚠️ Invalid phone number: ${rawPhone} (too short)`);
+    return null;
+  }
+  
+  // If it starts with 91 and has 12 digits total, it's already in correct format
+  if (cleanedPhone.startsWith("91") && cleanedPhone.length === 12) {
+    return cleanedPhone;
+  }
+  
+  // If it has 10 digits and doesn't start with 91, add 91 prefix
+  if (cleanedPhone.length === 10 && !cleanedPhone.startsWith("91")) {
+    return `91${cleanedPhone}`;
+  }
+  
+  // If it has 11 digits and starts with 0, replace 0 with 91
+  if (cleanedPhone.length === 11 && cleanedPhone.startsWith("0")) {
+    return `91${cleanedPhone.substring(1)}`;
+  }
+  
+  // If it already has 12 digits but doesn't start with 91, assume it's valid
+  if (cleanedPhone.length === 12) {
+    return cleanedPhone;
+  }
+  
+  // If none of the above conditions match, log warning and return null
+  console.warn(`⚠️ Invalid phone number format: ${rawPhone} (cleaned: ${cleanedPhone}, length: ${cleanedPhone.length})`);
+  return null;
 };
 
 // Function to get admin details
@@ -381,11 +411,9 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
     }
 
     const phone = getCustomerPhone(customer);
-    if (!phone) {
-      console.error("❌ Phone number not found for fulfillment notification");
-      return res.status(400).send("Missing phone number");
-    }
-
+    const customerName = `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
+    const orderId = order.name || "N/A";
+    
     const shippedItems = Array.isArray(order.line_items)
       ? order.line_items
           .map((item, idx) => `${idx + 1}. ${item.name} - ${item.quantity} no${item.quantity > 1 ? "s" : ""}`)
@@ -395,19 +423,35 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
     const trackingNumber = order?.fulfillments?.[0]?.tracking_number || "Not Available";
     const trackingLink = order?.fulfillments?.[0]?.tracking_url || "No link";
 
-    await sendCustomerWhatsapp(
-      phone,
-      "order_fulfilled",
-      [
-        customer.first_name || "Customer",
-        order.name || "N/A",
-        shippedItems,
-        trackingNumber,
-        trackingLink
-      ]
-    );
+    // Send customer notification if phone is available
+    if (phone) {
+      await sendCustomerWhatsapp(
+        phone,
+        "order_fulfilled",
+        [
+          customer.first_name || "Customer",
+          orderId,
+          shippedItems,
+          trackingNumber,
+          trackingLink
+        ]
+      );
+      console.log("✅ Customer fulfillment notification sent");
+    } else {
+      console.warn("⚠️ Customer phone not available for fulfillment notification");
+    }
 
-    console.log("✅ Fulfillment notification sent successfully");
+    // Send admin notification
+    await sendAdminWhatsapp("admin_order_fulfilled", [
+      orderId,
+      customerName || "Customer",
+      phone || "Not Provided",
+      shippedItems,
+      trackingNumber,
+      trackingLink
+    ]);
+
+    console.log("✅ Fulfillment notifications sent successfully");
     res.status(200).send("OK");
 
   } catch (error) {
