@@ -291,7 +291,7 @@ app.post("/webhook/orders/fulfilled", verifyShopifyWebhook, async (req, res) => 
     const shippedItems = Array.isArray(order.line_items)
       ? order.line_items
           .map((item, idx) => `${idx + 1}. ${item.name} - ${item.quantity} no${item.quantity > 1 ? "s" : ""}`)
-          .join("\n")
+          .join(", ")
       : "No items";
 
     const trackingNumber = order?.fulfillments?.[0]?.tracking_number || "Not Available";
