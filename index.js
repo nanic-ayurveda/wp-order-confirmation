@@ -121,6 +121,33 @@ const getCustomerPhone = (customer) => {
   return rawPhone.replace(/\s+/g, "").replace(/^\+/, "");
 };
 
+// Function to get admin details
+const getAdminDetails = () => {
+  const adminNumbers = process.env.ADMIN_WHATSAPP_NUMBERS;
+  const adminNames = process.env.ADMIN_NAMES;
+  const adminContacts = process.env.ADMIN_CONTACTS;
+  
+  if (!adminNumbers) {
+    console.warn("⚠️ ADMIN_WHATSAPP_NUMBERS not set in environment");
+    return [];
+  }
+
+  const numbers = adminNumbers.split(',').map(num => num.trim()).filter(num => num.length > 0);
+  const names = adminNames ? adminNames.split(',').map(name => name.trim()) : [];
+  const contacts = adminContacts ? adminContacts.split(',').map(contact => contact.trim()) : [];
+
+  return numbers.map((num, index) => ({
+    phone: num.startsWith('91') ? num : `91${num}`,
+    name: names[index] || 'Admin',
+    contact: contacts[index] || num
+  }));
+};
+
+// Function to get admin phone numbers (for backward compatibility)
+const getAdminNumbers = () => {
+  return getAdminDetails().map(admin => admin.phone);
+};
+
 // Function to send WhatsApp template message to customer
 const sendCustomerWhatsapp = async (phone, templateName, params) => {
   try {
@@ -156,29 +183,104 @@ const sendCustomerWhatsapp = async (phone, templateName, params) => {
   }
 };
 
-// Function to send WhatsApp text message to admin
-const sendAdminWhatsapp = async (message) => {
+// Function to send WhatsApp template message to admin(s)
+const sendAdminWhatsapp = async (templateName, baseParams) => {
   try {
     updateActivity(); // Update activity when sending messages
-    console.log("📱 Sending admin notification via WhatsApp");
-    await axios.post(
-      `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: "whatsapp",
-        to: process.env.TO_WHATSAPP_NUMBER,
-        type: "text",
-        text: { body: message },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-          "Content-Type": "application/json",
-        },
+    const adminDetails = getAdminDetails();
+    
+    if (adminDetails.length === 0) {
+      console.error("❌ No admin details configured");
+      return;
+    }
+
+    console.log(`📱 Sending WhatsApp template "${templateName}" to ${adminDetails.length} admin(s)`);
+    
+    const promises = adminDetails.map(async (admin) => {
+      try {
+        // Create personalized parameters for each admin
+        const params = [admin.name, ...baseParams];
+        
+        await axios.post(
+          `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+          {
+            messaging_product: "whatsapp",
+            to: admin.phone,
+            type: "template",
+            template: {
+              name: templateName,
+              language: { code: "en" },
+              components: [
+                {
+                  type: "body",
+                  parameters: params.map((text) => ({ type: "text", text })),
+                },
+              ],
+            },
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        console.log(`✅ Admin WhatsApp message sent successfully to ${admin.name} (${admin.phone})`);
+      } catch (err) {
+        console.error(`❌ Admin WhatsApp Error for ${admin.name} (${admin.phone}):`, err.response?.data || err.message);
       }
-    );
-    console.log("✅ Admin WhatsApp message sent successfully");
+    });
+
+    await Promise.all(promises);
+    console.log("✅ All admin notifications sent");
   } catch (err) {
-    console.error("❌ Admin WhatsApp send error:", err.response?.data || err.message);
+    console.error("❌ Admin WhatsApp send error:", err.message);
+  }
+};
+
+// Function to send WhatsApp text message to admin (fallback)
+const sendAdminWhatsappText = async (message) => {
+  try {
+    updateActivity(); // Update activity when sending messages
+    const adminDetails = getAdminDetails();
+    
+    if (adminDetails.length === 0) {
+      console.error("❌ No admin details configured");
+      return;
+    }
+
+    console.log(`📱 Sending text message to ${adminDetails.length} admin(s)`);
+    
+    const promises = adminDetails.map(async (admin) => {
+      try {
+        // Personalize the message for each admin
+        const personalizedMessage = message.replace(/Dear\s+\w+,/, `Dear ${admin.name},`);
+        
+        await axios.post(
+          `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+          {
+            messaging_product: "whatsapp",
+            to: admin.phone,
+            type: "text",
+            text: { body: personalizedMessage },
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        console.log(`✅ Admin text message sent successfully to ${admin.name} (${admin.phone})`);
+      } catch (err) {
+        console.error(`❌ Admin text message error for ${admin.name} (${admin.phone}):`, err.response?.data || err.message);
+      }
+    });
+
+    await Promise.all(promises);
+    console.log("✅ All admin text notifications sent");
+  } catch (err) {
+    console.error("❌ Admin text message send error:", err.message);
   }
 };
 
@@ -211,7 +313,7 @@ app.post("/webhook/orders/create", verifyShopifyWebhook, async (req, res) => {
 
     // Format address
     const fullAddress = address 
-      ? `${address.name || ''}, ${address.address1 || ''}, ${address.address2 || ''}, ${address.city}, ${address.province}, ${address.zip}, ${address.country}`
+      ? `${address.name || ''}, ${address.address1 || ''}, ${address.address2 || ''}, ${address.city}, ${address.province}, ${address.zip}, ${address.country}`.replace(/,\s*,/g, ',').replace(/^,\s*|,\s*$/g, '')
       : "Address not provided";
 
     // Format product list
@@ -221,20 +323,16 @@ app.post("/webhook/orders/create", verifyShopifyWebhook, async (req, res) => {
           .join("\n")
       : "No items";
 
-    // Admin notification message
-    const adminMessage = `Dear Arun,\n\n` +
-      `🛍️ New Order received on Shopify. Please visit Shopify and fulfill the items.\n\n` +
-      `📦 Order ID: ${orderId}\n` +
-      `👤 Customer Name: ${customer.first_name} ${customer.last_name}\n` +
-      `📱 Contact No: ${phone}\n` +
-      `🚚 Shipping Address:\n${fullAddress}\n` +
-      `💳 Payment Method: ${paymentMethod}\n` +
-      `🧾 Products:\n${products}\n\n` +
-      `💰 Total Amount: ₹${total}\n\n` +
-      `Thanks and Regards,\nNanic Ayurveda Bot`;
-
-    // Send admin notification
-    await sendAdminWhatsapp(adminMessage);
+    // Send admin notification using template
+    await sendAdminWhatsapp("admin_new_order", [
+      orderId,
+      `${customer.first_name || ''} ${customer.last_name || ''}`.trim(),
+      phone,
+      fullAddress,
+      paymentMethod,
+      products,
+      total?.toString() || "0"
+    ]);
 
     // Send customer confirmation if phone is available
     const customerPhone = getCustomerPhone(customer);
@@ -328,7 +426,8 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     lastActivity: new Date(lastActivity).toISOString(),
     timeSinceLastActivity: Math.round(timeSinceLastActivity / 1000),
-    isKeepAliveRequest: isKeepAlive
+    isKeepAliveRequest: isKeepAlive,
+    adminDetails: getAdminDetails()
   });
 });
 
@@ -340,7 +439,8 @@ app.get('/activity-status', (req, res) => {
     timeSinceLastActivity: Math.round(timeSinceLastActivity / 1000),
     thresholdSeconds: INACTIVITY_THRESHOLD / 1000,
     isInactive: timeSinceLastActivity > INACTIVITY_THRESHOLD,
-    keepAliveEnabled: !!(process.env.KEEP_ALIVE_URL)
+    keepAliveEnabled: !!(process.env.KEEP_ALIVE_URL),
+    adminDetails: getAdminDetails()
   });
 });
 
@@ -351,7 +451,6 @@ app.post("/test", (req, res) => {
   res.json({ received: true, body: req.body });
 });
 
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("✅ Server running on port", PORT);
@@ -361,6 +460,14 @@ app.listen(PORT, () => {
   console.log("- SHOPIFY_WEBHOOK_SECRET:", process.env.SHOPIFY_WEBHOOK_SECRET ? "✅ Set" : "❌ Missing");
   console.log("- WHATSAPP_PHONE_NUMBER_ID:", process.env.WHATSAPP_PHONE_NUMBER_ID ? "✅ Set" : "❌ Missing");
   console.log("- WHATSAPP_TOKEN:", process.env.WHATSAPP_TOKEN ? "✅ Set" : "❌ Missing");
-  console.log("- TO_WHATSAPP_NUMBER:", process.env.TO_WHATSAPP_NUMBER ? "✅ Set" : "❌ Missing");
+  console.log("- ADMIN_WHATSAPP_NUMBERS:", process.env.ADMIN_WHATSAPP_NUMBERS ? "✅ Set" : "❌ Missing");
+  console.log("- ADMIN_NAMES:", process.env.ADMIN_NAMES ? "✅ Set" : "❌ Missing");
+  console.log("- ADMIN_CONTACTS:", process.env.ADMIN_CONTACTS ? "✅ Set" : "❌ Missing");
   console.log("- KEEP_ALIVE_URL:", process.env.KEEP_ALIVE_URL ? "✅ Set" : "❌ Missing");
+  
+  const adminDetails = getAdminDetails();
+  console.log("📱 Admin details configured:", adminDetails.length);
+  adminDetails.forEach((admin, idx) => {
+    console.log(`   ${idx + 1}. ${admin.name} - ${admin.phone} (Contact: ${admin.contact})`);
+  });
 });
